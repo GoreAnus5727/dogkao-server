@@ -31,8 +31,13 @@ io.on('connection', (socket) => {
 
   socket.on('room:create', ({ name, roomName, clientId }, cb) => {
     const roomId = Math.random().toString(36).substring(2, 6).toUpperCase();
-    rooms.set(roomId, { id: roomId, name: roomName || `Pokój ${name}`, players: [{ id: clientId, name, socketId: socket.id }] });
+    const newRoom = { id: roomId, name: roomName || `Pokój ${name}`, players: [{ id: clientId, name, socketId: socket.id }] };
+    rooms.set(roomId, newRoom);
     socket.join(roomId);
+    
+    // NOWE: Wysyłamy listę graczy od razu po stworzeniu pokoju
+    io.to(roomId).emit('room:update', { players: newRoom.players });
+    
     cb?.({ roomId, roomName });
   });
 
@@ -73,7 +78,14 @@ io.on('connection', (socket) => {
 
   socket.on('game:start', ({ roomId }) => {
     const room = rooms.get(roomId);
-    if (!room || room.players.length < 2) return;
+    if (!room) return;
+    
+    // NOWE: Jeśli jest za mało graczy, wysyłamy błąd
+    if (room.players.length < 2) {
+      socket.emit('game:error', { message: 'Potrzebujesz co najmniej 2 graczy, żeby zacząć!' });
+      return;
+    }
+
     room.game = initGame(roomId, room.players);
     io.to(roomId).emit('game:started');
     startTurnTimer(roomId);
@@ -158,13 +170,11 @@ io.on('connection', (socket) => {
 
   function startTurnTimer(roomId: string) {
     if (roomTimers.has(roomId)) clearTimeout(roomTimers.get(roomId));
-    
     const timer = setTimeout(() => {
       const room = rooms.get(roomId);
       if (room?.game && !room.game.winnerId) {
         const currentPlayer = room.game.players[room.game.currentTurnIndex];
         try {
-          // POPRAWKA: Jeśli gracz już dobrał i nie ma kary, to pasuje. Inaczej dobiera.
           if (room.game.hasDrawnInTurn && room.game.pendingDraw === 0) {
             room.game = passTurn(room.game, currentPlayer.id);
           } else {
