@@ -1,4 +1,4 @@
-export type Suit = 'H' | 'D' | 'C' | 'S';
+export type Suit = 'H' | 'D' | 'C' | 'S'; 
 export type Rank = '2'|'3'|'4'|'5'|'6'|'7'|'8'|'9'|'10'|'J'|'Q'|'K'|'A';
 
 export interface Card {
@@ -7,10 +7,10 @@ export interface Card {
 }
 
 export interface PlayerState {
-  id: string; // To będzie nasze clientId
+  id: string; 
   name: string;
   hand: Card[];
-  connected: boolean; // NOWE
+  connected: boolean; 
 }
 
 export interface GameState {
@@ -24,5 +24,7 @@ export interface GameState {
   winnerId?: string;
   hasDrawnInTurn: boolean;
   makaoPlayers: string[];
-  turnEndTime: number; // NOWE: Timestamp (w ms) kiedy kończy się tura
+  turnEndTime: number; 
+  requestedRank?: Rank; 
+  lastPlayerIndex: number; 
 }

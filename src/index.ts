@@ -34,10 +34,7 @@ io.on('connection', (socket) => {
     const newRoom = { id: roomId, name: roomName || `Pokój ${name}`, players: [{ id: clientId, name, socketId: socket.id }] };
     rooms.set(roomId, newRoom);
     socket.join(roomId);
-    
-    // NOWE: Wysyłamy listę graczy od razu po stworzeniu pokoju
     io.to(roomId).emit('room:update', { players: newRoom.players });
-    
     cb?.({ roomId, roomName });
   });
 
@@ -59,33 +56,32 @@ io.on('connection', (socket) => {
     cb?.({ success: true });
   });
 
-  socket.on('game:reconnect', ({ roomId, clientId }, cb) => {
+  // Naprawa błędu z ładowaniem w nieskończoność
+  socket.on('room:leave', ({ roomId }) => {
     const room = rooms.get(roomId);
-    if (!room || !room.game) return cb?.({ error: 'Brak aktywnej gry' });
-    
-    const player = room.players.find(p => p.id === clientId);
-    if (!player) return cb?.({ error: 'Nie ma Cię w tym pokoju' });
+    if (room) {
+      room.game = undefined; // Zwalniamy grę
+      if (roomTimers.has(roomId)) clearTimeout(roomTimers.get(roomId));
+      socket.leave(roomId);
+    }
+  });
 
-    player.socketId = socket.id;
-    socket.join(roomId);
-    
-    const gamePlayer = room.game.players.find(p => p.id === clientId);
-    if (gamePlayer) gamePlayer.connected = true;
-    
-    cb?.({ success: true });
+  socket.on('game:rematch', ({ roomId }) => {
+    const room = rooms.get(roomId);
+    if (!room || !room.game) return;
+    room.game = initGame(roomId, room.players);
+    io.to(roomId).emit('game:started'); 
+    startTurnTimer(roomId);
     broadcastState(roomId, room.game);
   });
 
   socket.on('game:start', ({ roomId }) => {
     const room = rooms.get(roomId);
     if (!room) return;
-    
-    // NOWE: Jeśli jest za mało graczy, wysyłamy błąd
     if (room.players.length < 2) {
-      socket.emit('game:error', { message: 'Potrzebujesz co najmniej 2 graczy, żeby zacząć!' });
+      socket.emit('game:error', { message: 'Potrzebujesz co najmniej 2 graczy!' });
       return;
     }
-
     room.game = initGame(roomId, room.players);
     io.to(roomId).emit('game:started');
     startTurnTimer(roomId);
@@ -97,12 +93,11 @@ io.on('connection', (socket) => {
     if (room?.game) broadcastState(roomId, room.game);
   });
 
-  socket.on('game:play', ({ roomId, card, chosenSuit, clientId }) => {
+  socket.on('game:play', ({ roomId, card, chosenSuit, requestedRank, clientId }) => {
     const room = rooms.get(roomId);
     if (!room?.game) return;
     try {
-      const newState = playCard(room.game, clientId, card);
-      if (card.rank === 'J' && chosenSuit) newState.currentSuit = chosenSuit;
+      const newState = playCard(room.game, clientId, card, chosenSuit, requestedRank);
       room.game = newState;
       startTurnTimer(roomId);
       broadcastState(roomId, room.game);
@@ -112,45 +107,25 @@ io.on('connection', (socket) => {
   socket.on('game:draw', ({ roomId, clientId }) => {
     const room = rooms.get(roomId);
     if (!room?.game) return;
-    try {
-      room.game = drawCard(room.game, clientId);
-      startTurnTimer(roomId);
-      broadcastState(roomId, room.game);
-    } catch (e: any) { socket.emit('game:error', { message: e.message }); }
+    try { room.game = drawCard(room.game, clientId); startTurnTimer(roomId); broadcastState(roomId, room.game); } catch (e: any) { socket.emit('game:error', { message: e.message }); }
   });
 
   socket.on('game:pass', ({ roomId, clientId }) => {
     const room = rooms.get(roomId);
     if (!room?.game) return;
-    try {
-      room.game = passTurn(room.game, clientId);
-      startTurnTimer(roomId);
-      broadcastState(roomId, room.game);
-    } catch (e: any) { socket.emit('game:error', { message: e.message }); }
+    try { room.game = passTurn(room.game, clientId); startTurnTimer(roomId); broadcastState(roomId, room.game); } catch (e: any) { socket.emit('game:error', { message: e.message }); }
   });
 
   socket.on('game:makao', ({ roomId, clientId }) => {
     const room = rooms.get(roomId);
     if (!room?.game) return;
-    room.game = callMakao(room.game, clientId);
-    broadcastState(roomId, room.game);
+    room.game = callMakao(room.game, clientId); broadcastState(roomId, room.game);
   });
 
   socket.on('game:catch', ({ roomId, targetId, clientId }) => {
     const room = rooms.get(roomId);
     if (!room?.game) return;
-    try {
-      room.game = catchMakao(room.game, clientId, targetId);
-      broadcastState(roomId, room.game);
-    } catch (e: any) { socket.emit('game:error', { message: e.message }); }
-  });
-
-  socket.on('game:rematch', ({ roomId }) => {
-    const room = rooms.get(roomId);
-    if (!room || !room.game) return;
-    room.game = initGame(roomId, room.players);
-    startTurnTimer(roomId);
-    broadcastState(roomId, room.game);
+    try { room.game = catchMakao(room.game, clientId, targetId); broadcastState(roomId, room.game); } catch (e: any) { socket.emit('game:error', { message: e.message }); }
   });
 
   socket.on('chat:message', ({ roomId, text, senderName }) => {
@@ -175,11 +150,8 @@ io.on('connection', (socket) => {
       if (room?.game && !room.game.winnerId) {
         const currentPlayer = room.game.players[room.game.currentTurnIndex];
         try {
-          if (room.game.hasDrawnInTurn && room.game.pendingDraw === 0) {
-            room.game = passTurn(room.game, currentPlayer.id);
-          } else {
-            room.game = drawCard(room.game, currentPlayer.id);
-          }
+          if (room.game.hasDrawnInTurn && room.game.pendingDraw === 0) room.game = passTurn(room.game, currentPlayer.id);
+          else room.game = drawCard(room.game, currentPlayer.id);
           startTurnTimer(roomId);
           broadcastState(roomId, room.game);
         } catch (e) { console.error('Timer error:', e); }
@@ -200,6 +172,7 @@ io.on('connection', (socket) => {
         hasDrawnInTurn: state.hasDrawnInTurn,
         makaoPlayers: state.makaoPlayers,
         turnEndTime: state.turnEndTime,
+        requestedRank: state.requestedRank,
       };
       const room = rooms.get(roomId);
       const playerSocket = room?.players.find(pl => pl.id === p.id)?.socketId;

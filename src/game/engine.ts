@@ -33,7 +33,7 @@ export function initGame(roomId: string, players: { id: string; name: string }[]
   }
 
   let firstCard = deck.pop()!;
-  while (['2','3','4','K','A','J'].includes(firstCard.rank)) {
+  while (['2','3','4','K','A','J','Q'].includes(firstCard.rank)) {
     deck.unshift(firstCard);
     firstCard = deck.pop()!;
   }
@@ -48,20 +48,38 @@ export function initGame(roomId: string, players: { id: string; name: string }[]
     currentSuit: firstCard.suit,
     hasDrawnInTurn: false,
     makaoPlayers: [],
-    turnEndTime: Date.now() + 30000, // 30 sekund
+    turnEndTime: Date.now() + 30000,
+    lastPlayerIndex: -1,
   };
 }
 
 export function canPlayCard(state: GameState, card: Card): boolean {
   const top = state.discardPile[state.discardPile.length - 1];
-  if (state.pendingDraw > 0) return card.rank === top.rank; 
-  if (card.rank === 'J') return true;
+  
+  // Kara (2,3,K) - musisz przebić tą samą figurą
+  if (state.pendingDraw > 0) {
+    return card.rank === top.rank || card.rank === 'K';
+  }
+
+  // Jopek - żądanie figury
+  if (state.requestedRank) {
+    return card.rank === state.requestedRank || card.rank === 'J';
+  }
+
+  // Dama (Q) - idzie na wszystko, a wszystko idzie na nią
+  if (card.rank === 'Q' || top.rank === 'Q') return true;
+  
+  // As (A) - idzie na wszystko (bo zmienia kolor)
+  if (card.rank === 'A') return true;
+  
+  // Standardowo: kolor lub figura
   if (card.suit === state.currentSuit) return true;
   if (card.rank === top.rank) return true;
+  
   return false;
 }
 
-export function playCard(state: GameState, playerId: string, card: Card): GameState {
+export function playCard(state: GameState, playerId: string, card: Card, chosenSuit?: Suit, requestedRank?: Rank): GameState {
   if (state.winnerId) throw new Error('Gra już zakończona');
   const playerIndex = state.players.findIndex(p => p.id === playerId);
   if (playerIndex !== state.currentTurnIndex) throw new Error('Nie twoja kolej');
@@ -74,22 +92,65 @@ export function playCard(state: GameState, playerId: string, card: Card): GameSt
 
   player.hand.splice(cardIndex, 1);
   state.discardPile.push(card);
-  state.currentSuit = card.suit;
   state.hasDrawnInTurn = false; 
+  
+  if (player.hand.length > 1) {
+    state.makaoPlayers = state.makaoPlayers.filter(id => id !== playerId);
+  }
 
   let skipNext = false;
-  if (card.rank === '2') state.pendingDraw += 2;
-  if (card.rank === '3') state.pendingDraw += 3;
-  if (card.rank === 'K' && card.suit === 'H') state.pendingDraw += 5;
-  if (card.rank === '4' || card.rank === 'A') skipNext = true;
+  let reverseTurn = false;
 
+  if (card.rank === 'A' && chosenSuit) {
+    state.currentSuit = chosenSuit; 
+  } else {
+    state.currentSuit = card.suit;
+  }
+
+  if (card.rank === 'Q') {
+    // Dama nic nie robi, po prostu leży
+  } else if (card.rank === 'J' && requestedRank) {
+    state.requestedRank = requestedRank; 
+  } else if (card.rank === '2') {
+    state.pendingDraw += 2;
+  } else if (card.rank === '3') {
+    state.pendingDraw += 3;
+  } else if (card.rank === 'K') {
+    if (card.suit === 'H') state.pendingDraw += 5;
+    if (card.suit === 'S') {
+      reverseTurn = true; 
+    }
+    if (card.suit === 'C' || card.suit === 'D') {
+      state.pendingDraw = 0; 
+    }
+  } else if (card.rank === '4') {
+    skipNext = true;
+  }
+
+  if (card.rank !== 'J' && state.requestedRank && card.rank === state.requestedRank) {
+    state.requestedRank = undefined; 
+  }
+
+  state.lastPlayerIndex = state.currentTurnIndex;
   let nextIndex = (state.currentTurnIndex + 1) % state.players.length;
-  if (skipNext) nextIndex = (nextIndex + 1) % state.players.length;
+  
+  if (reverseTurn) {
+    nextIndex = (state.currentTurnIndex - 1 + state.players.length) % state.players.length;
+    const prevPlayer = state.players[nextIndex];
+    for(let i=0; i<5; i++) {
+        if(state.deck.length === 0) reshuffle(state);
+        prevPlayer.hand.push(state.deck.pop()!);
+    }
+  }
+
+  if (skipNext) {
+    nextIndex = (nextIndex + 1) % state.players.length;
+  }
 
   state.currentTurnIndex = nextIndex;
   if (player.hand.length === 0) state.winnerId = player.id;
   
-  state.turnEndTime = Date.now() + 30000; // Reset czasu
+  state.turnEndTime = Date.now() + 30000;
   return state;
 }
 
@@ -112,8 +173,10 @@ export function drawCard(state: GameState, playerId: string): GameState {
     if (state.deck.length === 0) reshuffle(state);
     player.hand.push(state.deck.pop()!);
     state.hasDrawnInTurn = true; 
+    state.makaoPlayers = state.makaoPlayers.filter(id => id !== playerId);
   }
-  state.turnEndTime = Date.now() + 30000; // Reset czasu
+  
+  state.turnEndTime = Date.now() + 30000;
   return state;
 }
 
@@ -124,7 +187,7 @@ export function passTurn(state: GameState, playerId: string): GameState {
 
   state.hasDrawnInTurn = false;
   state.currentTurnIndex = (state.currentTurnIndex + 1) % state.players.length;
-  state.turnEndTime = Date.now() + 30000; // Reset czasu
+  state.turnEndTime = Date.now() + 30000; 
   return state;
 }
 
