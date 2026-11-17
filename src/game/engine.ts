@@ -56,9 +56,9 @@ export function initGame(roomId: string, players: { id: string; name: string }[]
 export function canPlayCard(state: GameState, card: Card): boolean {
   const top = state.discardPile[state.discardPile.length - 1];
   
-  // Kara (2,3,K) - musisz przebić tą samą figurą
+  // Kara (2,3,K) - musisz przebić tą samą figurą lub Królem
   if (state.pendingDraw > 0) {
-    return card.rank === top.rank || card.rank === 'K';
+    return card.rank === top.rank || card.rank === 'K'; 
   }
 
   // Jopek - żądanie figury
@@ -108,7 +108,7 @@ export function playCard(state: GameState, playerId: string, card: Card, chosenS
   }
 
   if (card.rank === 'Q') {
-    // Dama nic nie robi, po prostu leży
+    // Dama nic nie robi
   } else if (card.rank === 'J' && requestedRank) {
     state.requestedRank = requestedRank; 
   } else if (card.rank === '2') {
@@ -116,12 +116,15 @@ export function playCard(state: GameState, playerId: string, card: Card, chosenS
   } else if (card.rank === '3') {
     state.pendingDraw += 3;
   } else if (card.rank === 'K') {
-    if (card.suit === 'H') state.pendingDraw += 5;
+    if (card.suit === 'H') {
+      state.pendingDraw += 5; // Król Kier +5
+    }
     if (card.suit === 'S') {
+      state.pendingDraw += 5; // Król Pik +5 (kara idzie do tyłu)
       reverseTurn = true; 
     }
     if (card.suit === 'C' || card.suit === 'D') {
-      state.pendingDraw = 0; 
+      state.pendingDraw = 0; // Król Trefl/Karo blokuje i zeruje karę
     }
   } else if (card.rank === '4') {
     skipNext = true;
@@ -134,13 +137,9 @@ export function playCard(state: GameState, playerId: string, card: Card, chosenS
   state.lastPlayerIndex = state.currentTurnIndex;
   let nextIndex = (state.currentTurnIndex + 1) % state.players.length;
   
+  // Jeśli Król Pik, tura cofa się (do poprzedniego gracza)
   if (reverseTurn) {
     nextIndex = (state.currentTurnIndex - 1 + state.players.length) % state.players.length;
-    const prevPlayer = state.players[nextIndex];
-    for(let i=0; i<5; i++) {
-        if(state.deck.length === 0) reshuffle(state);
-        prevPlayer.hand.push(state.deck.pop()!);
-    }
   }
 
   if (skipNext) {
@@ -161,6 +160,7 @@ export function drawCard(state: GameState, playerId: string): GameState {
 
   const player = state.players[playerIndex];
   
+  // Jeśli jest kara, gracz dobiera jej całość i tura przechodzi dalej
   if (state.pendingDraw > 0) {
     for (let i = 0; i < state.pendingDraw; i++) {
       if (state.deck.length === 0) reshuffle(state);
@@ -170,6 +170,7 @@ export function drawCard(state: GameState, playerId: string): GameState {
     state.hasDrawnInTurn = false;
     state.currentTurnIndex = (state.currentTurnIndex + 1) % state.players.length;
   } else {
+    // Zwykłe dobieranie
     if (state.deck.length === 0) reshuffle(state);
     player.hand.push(state.deck.pop()!);
     state.hasDrawnInTurn = true; 
