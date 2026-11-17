@@ -15,10 +15,12 @@ app.use(express.json());
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
-// WPISZ TUTAJ SWOJ LINK Z MONGODB (pamietaj o podmienieniu hasla!)
-const MONGO_URI = 'mongodb+srv://<db_username>:<db_password>@dogkao.wuzcmsl.mongodb.net/<database_name>'; 
+// TUTAJ JEST WPISANY TWOJ LINK DO BAZY DANYCH
+const MONGO_URI = 'mongodb+srv://elputusmadrus_db_user:IHf1PnUdVbMXMg9b@dogkao.wuzcmsl.mongodb.net/?retryWrites=true&w=majority'; 
 
-mongoose.connect(MONGO_URI).then(() => console.log('✅ Połączono z bazą MongoDB')).catch(err => console.error('❌ Błąd bazy:', err));
+mongoose.connect(MONGO_URI)
+  .then(() => console.log('✅ Połączono z bazą MongoDB'))
+  .catch(err => console.error('❌ Błąd bazy:', err));
 
 interface Room {
   id: string;
@@ -29,6 +31,13 @@ interface Room {
 const rooms = new Map<string, Room>();
 const roomTimers = new Map<string, NodeJS.Timeout>();
 const botTimers = new Map<string, NodeJS.Timeout>();
+
+// Lista nazw dla botów
+const botNames = [
+  'pan robot', 'timmy prime', 'nigatron', 'ulsron', 'wizja', 'webster', 
+  'borgcy', 'exterminator', 'złote C', 'łihuuuuu', 'ściana E', 
+  'miedziany tytan', 'straightener', 'can you?', 'robercik', 'WSPANIAŁ-O'
+];
 
 app.get('/health', (_, res) => res.json({ ok: true, rooms: rooms.size }));
 
@@ -109,9 +118,11 @@ io.on('connection', (socket) => {
   socket.on('room:addBot', ({ roomId }) => {
     const room = rooms.get(roomId);
     if (!room || room.game || room.players.length >= 4) return;
-    const botNumber = room.players.filter(p => p.id.startsWith('bot_')).length + 1;
+    
     const botId = `bot_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`;
-    room.players.push({ id: botId, name: `Bot ${botNumber} 🤖`, socketId: null });
+    const randomName = botNames[Math.floor(Math.random() * botNames.length)];
+    
+    room.players.push({ id: botId, name: randomName, socketId: null });
     io.to(roomId).emit('room:update', { players: room.players });
   });
 
@@ -210,15 +221,12 @@ io.on('connection', (socket) => {
     });
   });
 
-  // LOGIKA BOTÓW (bez zmian)
   function handleNextTurn(roomId: string) {
     const room = rooms.get(roomId);
     if (!room?.game || room.game.winnerId) return;
     const currentPlayer = room.game.players[room.game.currentTurnIndex];
     
-    // NOWE: Jeśli ktoś wygrał, zapisujemy to w bazie!
     if (room.game.winnerId) {
-        // Znajdź gracza, sprawdź czy to nie bot, i dodaj wygraną
         const winnerId = room.game.winnerId;
         if (!winnerId.startsWith('bot_')) {
             User.findByIdAndUpdate(winnerId, { $inc: { wins: 1 } }).catch(err => console.log(err));
