@@ -18,7 +18,6 @@ const io = new Server(server, { cors: { origin: '*' } });
 // Link do bazy z wymuszonym IPv4 (&family=4) - to naprawia błędy na Render
 const MONGO_URI = process.env.MONGO_URI || 'mongodb+srv://elputusmadrus_db_user:SpookyFace@dogkao.wuzcmsl.mongodb.net/?retryWrites=true&w=majority&family=4';
 
-
 mongoose.connect(MONGO_URI)
   .then(() => console.log('✅ Połączono z bazą MongoDB'))
   .catch(err => console.error('❌ Błąd bazy:', err));
