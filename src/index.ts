@@ -15,8 +15,8 @@ app.use(express.json());
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
-// TUTAJ JEST WPISANY TWOJ LINK DO BAZY DANYCH
-const MONGO_URI = 'mongodb+srv://elputusmadrus_db_user:IHf1PnUdVbMXMg9b@dogkao.wuzcmsl.mongodb.net/?retryWrites=true&w=majority'; 
+// Link do bazy z wymuszonym IPv4 (&family=4) - to naprawia błędy na Render
+const MONGO_URI = process.env.MONGO_URI || 'mongodb+srv://elputusmadrus_db_user:IHf1PnUdVbMXMg9b@dogkao.wuzcmsl.mongodb.net/?retryWrites=true&w=majority&family=4'; 
 
 mongoose.connect(MONGO_URI)
   .then(() => console.log('✅ Połączono z bazą MongoDB'))
@@ -32,7 +32,6 @@ const rooms = new Map<string, Room>();
 const roomTimers = new Map<string, NodeJS.Timeout>();
 const botTimers = new Map<string, NodeJS.Timeout>();
 
-// Lista nazw dla botów
 const botNames = [
   'pan robot', 'timmy prime', 'nigatron', 'ulsron', 'wizja', 'webster', 
   'borgcy', 'exterminator', 'złote C', 'łihuuuuu', 'ściana E', 
@@ -55,6 +54,7 @@ io.on('connection', (socket) => {
       
       cb({ success: true, userId: user._id.toString(), username: user.username, wins: user.wins });
     } catch (e) {
+      console.error('Błąd rejestracji:', e);
       cb({ error: 'Błąd serwera' });
     }
   });
