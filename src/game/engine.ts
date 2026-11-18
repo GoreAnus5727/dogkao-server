@@ -97,24 +97,33 @@ export function playCards(state: GameState, playerId: string, cards: Card[], cho
 
   const player = state.players[playerIndex];
   
+  // POPRAWKA: Jeśli zagrywany jest Jopek z żądaniem, ignorujemy inne karty w paczce
+  let cardsToPlay = [...cards];
+  if (requestedRank) {
+    const jacks = cardsToPlay.filter(c => c.rank === 'J');
+    if (jacks.length > 0) {
+      cardsToPlay = jacks; 
+    }
+  }
+
   // Weryfikacja czy gracz ma te karty
   const handCopy = [...player.hand];
-  for (const card of cards) {
+  for (const card of cardsToPlay) {
     const idx = handCopy.findIndex(c => c.suit === card.suit && c.rank === card.rank);
     if (idx === -1) throw new Error('Nie masz tej karty');
     handCopy.splice(idx, 1);
   }
 
-  if (!canPlayCards(state, cards)) throw new Error('Nie możesz zagrać tych kart');
+  if (!canPlayCards(state, cardsToPlay)) throw new Error('Nie możesz zagrać tych kart');
 
   // Usuwanie z ręki
-  for (const card of cards) {
+  for (const card of cardsToPlay) {
     const idx = player.hand.findIndex(c => c.suit === card.suit && c.rank === card.rank);
     player.hand.splice(idx, 1);
   }
 
   // Dodawanie na stos
-  state.discardPile.push(...cards);
+  state.discardPile.push(...cardsToPlay);
   state.hasDrawnInTurn = false; 
   
   if (player.hand.length > 1) {
@@ -124,28 +133,27 @@ export function playCards(state: GameState, playerId: string, cards: Card[], cho
   let skipNext = false;
   let reverseTurn = false;
 
-  const lastCard = cards[cards.length - 1];
+  const lastCard = cardsToPlay[cardsToPlay.length - 1];
   if (lastCard.rank === 'A' && chosenSuit) {
     state.currentSuit = chosenSuit; 
   } else {
     state.currentSuit = lastCard.suit;
   }
 
-  // Obsługa żądania Jopka
-  if (state.requestedRank) {
-    if (cards.length === 1 && cards[0].rank === 'J') {
-      if (!requestedRank || !['5','6','7','8','9','10'].includes(requestedRank)) throw new Error('Jopek może żądać tylko kart 5-10');
-      state.requestedRank = requestedRank;
-    } else if (cards.some(c => c.rank === state.requestedRank)) {
+  // POPRAWKA: Obsługa żądania Jopka (bez sprawdzania, czy gracz ma tę kartę w ręce)
+  const playedJack = cardsToPlay.find(c => c.rank === 'J');
+  if (playedJack && requestedRank) {
+    if (!['5','6','7','8','9','10'].includes(requestedRank)) throw new Error('Jopek może żądać tylko kart 5-10');
+    state.requestedRank = requestedRank;
+  } else if (state.requestedRank) {
+    // Jeśli nie zagrano Jopka, sprawdzamy czy spełniono żądanie
+    if (cardsToPlay.some(c => c.rank === state.requestedRank)) {
       state.requestedRank = undefined; // Żądanie spełnione
     }
-  } else if (cards.length === 1 && cards[0].rank === 'J') {
-    if (!requestedRank || !['5','6','7','8','9','10'].includes(requestedRank)) throw new Error('Jopek może żądać tylko kart 5-10');
-    state.requestedRank = requestedRank;
   }
 
   // Efekty kart
-  for (const card of cards) {
+  for (const card of cardsToPlay) {
     if (card.rank === '2') state.pendingDraw += 2;
     else if (card.rank === '3') state.pendingDraw += 3;
     else if (card.rank === 'K') {
@@ -180,7 +188,6 @@ export function playCards(state: GameState, playerId: string, cards: Card[], cho
   return state;
 }
 
-// Reszta funkcji (drawCard, passTurn, callMakao, catchMakao, reshuffle) pozostaje taka sama jak wcześniej.
 export function drawCard(state: GameState, playerId: string): GameState {
   if (state.winnerId) throw new Error('Gra już zakończona');
   const playerIndex = state.players.findIndex(p => p.id === playerId);
