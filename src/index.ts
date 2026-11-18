@@ -5,8 +5,8 @@ import cors from 'cors';
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 import { User } from './models/User';
-import { initGame, playCard, drawCard, passTurn, callMakao, catchMakao, canPlayCard } from './game/engine';
-import { GameState, Suit, Rank } from './game/types';
+import { initGame, playCards, drawCard, passTurn, callMakao, catchMakao, canPlayCard } from './game/engine';
+import { GameState, Suit, Rank, Card } from './game/types';
 
 const app = express();
 app.use(cors());
@@ -68,6 +68,34 @@ io.on('connection', (socket) => {
       if (!isValid) return cb({ error: 'Złe hasło' });
 
       cb({ success: true, userId: user._id.toString(), username: user.username, wins: user.wins });
+    } catch (e) {
+      cb({ error: 'Błąd serwera' });
+    }
+  });
+
+  // NOWE: Zmiana nazwy
+  socket.on('auth:changeName', async ({ userId, newName }, cb) => {
+    try {
+      const existing = await User.findOne({ username: newName });
+      if (existing) return cb({ error: 'Ten nick jest już zajęty' });
+
+      const user = await User.findByIdAndUpdate(userId, { username: newName }, { new: true });
+      if (!user) return cb({ error: 'Nie znaleziono użytkownika' });
+
+      rooms.forEach(room => {
+        const player = room.players.find(p => p.id === userId);
+        if (player) {
+          player.name = newName;
+          io.to(room.id).emit('room:update', { players: room.players });
+        }
+        if (room.game) {
+          const gamePlayer = room.game.players.find(p => p.id === userId);
+          if (gamePlayer) gamePlayer.name = newName;
+          broadcastState(room.id, room.game);
+        }
+      });
+
+      cb({ success: true, username: user.username });
     } catch (e) {
       cb({ error: 'Błąd serwera' });
     }
@@ -160,11 +188,12 @@ io.on('connection', (socket) => {
     if (room?.game) broadcastState(roomId, room.game);
   });
 
-  socket.on('game:play', ({ roomId, card, chosenSuit, requestedRank, clientId }) => {
+  // ZMIENIONE: Odbiera tablicę "cards" zamiast pojedynczej "card"
+  socket.on('game:play', ({ roomId, cards, chosenSuit, requestedRank, clientId }) => {
     const room = rooms.get(roomId);
     if (!room?.game) return;
     try {
-      room.game = playCard(room.game, clientId, card, chosenSuit, requestedRank);
+      room.game = playCards(room.game, clientId, cards, chosenSuit, requestedRank);
       if (roomTimers.has(roomId)) clearTimeout(roomTimers.get(roomId));
       broadcastState(roomId, room.game);
       handleNextTurn(roomId);
@@ -223,15 +252,18 @@ io.on('connection', (socket) => {
 
   function handleNextTurn(roomId: string) {
     const room = rooms.get(roomId);
-    if (!room?.game || room.game.winnerId) return;
-    const currentPlayer = room.game.players[room.game.currentTurnIndex];
-    
+    if (!room?.game) return;
+
+    // NAPRAWA RANKINGU: Jeśli ktoś wygrał, zapisujemy to i przerywamy dalsze sprawdzanie tur
     if (room.game.winnerId) {
         const winnerId = room.game.winnerId;
         if (!winnerId.startsWith('bot_')) {
             User.findByIdAndUpdate(winnerId, { $inc: { wins: 1 } }).catch(err => console.log(err));
         }
+        return; 
     }
+
+    const currentPlayer = room.game.players[room.game.currentTurnIndex];
 
     if (currentPlayer.id.startsWith('bot_')) {
       const timer = setTimeout(() => playBotMove(roomId), 2000);
@@ -247,16 +279,34 @@ io.on('connection', (socket) => {
     const bot = room.game.players[room.game.currentTurnIndex];
     if (!bot.id.startsWith('bot_')) return;
 
-    const playableCard = bot.hand.find(c => canPlayCard(room.game!, c));
-
     try {
+      // NOWE: Bot sprawdza, czy jest żądanie i czy ma wiele kart do wyłożenia
+      if (room.game.requestedRank) {
+        const cardsToPlay = bot.hand.filter((c: Card) => c.rank === room.game!.requestedRank);
+        if (cardsToPlay.length > 0) {
+          room.game = playCards(room.game, bot.id, cardsToPlay);
+          if (bot.hand.length === 1) room.game = callMakao(room.game, bot.id);
+          broadcastState(roomId, room.game);
+          handleNextTurn(roomId);
+          return;
+        }
+      }
+
+      const playableCard = bot.hand.find((c: Card) => canPlayCard(room.game!, c));
+
       if (playableCard) {
         let suit: Suit | undefined = undefined;
         let rank: Rank | undefined = undefined;
-        if (playableCard.rank === 'A') { const suits: Suit[] = ['H', 'D', 'C', 'S']; suit = suits[Math.floor(Math.random() * suits.length)]; }
-        else if (playableCard.rank === 'J') { const ranks: Rank[] = ['2','3','4','5','6','7','8','9','10','Q','K','A']; rank = ranks[Math.floor(Math.random() * ranks.length)]; }
+        if (playableCard.rank === 'A') { 
+          const suits: Suit[] = ['H', 'D', 'C', 'S']; 
+          suit = suits[Math.floor(Math.random() * suits.length)]; 
+        } else if (playableCard.rank === 'J') { 
+          // ZMIENIONE: Bot żąda tylko 5-10
+          const ranks: Rank[] = ['5','6','7','8','9','10']; 
+          rank = ranks[Math.floor(Math.random() * ranks.length)]; 
+        }
 
-        room.game = playCard(room.game, bot.id, playableCard, suit, rank);
+        room.game = playCards(room.game, bot.id, [playableCard], suit, rank);
         if (bot.hand.length === 1) room.game = callMakao(room.game, bot.id);
       } else {
         room.game = drawCard(room.game, bot.id);
@@ -264,9 +314,14 @@ io.on('connection', (socket) => {
         if (room.game.hasDrawnInTurn && canPlayCard(room.game, drawnCard)) {
            let suit: Suit | undefined = undefined;
            let rank: Rank | undefined = undefined;
-           if (drawnCard.rank === 'A') { const suits: Suit[] = ['H', 'D', 'C', 'S']; suit = suits[Math.floor(Math.random() * suits.length)]; }
-           else if (drawnCard.rank === 'J') { const ranks: Rank[] = ['2','3','4','5','6','7','8','9','10','Q','K','A']; rank = ranks[Math.floor(Math.random() * ranks.length)]; }
-           room.game = playCard(room.game, bot.id, drawnCard, suit, rank);
+           if (drawnCard.rank === 'A') { 
+             const suits: Suit[] = ['H', 'D', 'C', 'S']; 
+             suit = suits[Math.floor(Math.random() * suits.length)]; 
+           } else if (drawnCard.rank === 'J') { 
+             const ranks: Rank[] = ['5','6','7','8','9','10']; 
+             rank = ranks[Math.floor(Math.random() * ranks.length)]; 
+           }
+           room.game = playCards(room.game, bot.id, [drawnCard], suit, rank);
            if (bot.hand.length === 1) room.game = callMakao(room.game, bot.id);
         } else if (room.game.hasDrawnInTurn) {
            room.game = passTurn(room.game, bot.id);

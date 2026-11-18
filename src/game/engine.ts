@@ -56,44 +56,65 @@ export function initGame(roomId: string, players: { id: string; name: string }[]
 export function canPlayCard(state: GameState, card: Card): boolean {
   const top = state.discardPile[state.discardPile.length - 1];
   
-  // Kara (2,3,K) - musisz przebić tą samą figurą lub Królem
   if (state.pendingDraw > 0) {
     return card.rank === top.rank || card.rank === 'K';
   }
 
-  // Jopek - żądanie figury
   if (state.requestedRank) {
     return card.rank === state.requestedRank || card.rank === 'J';
   }
 
-  // Dama (Q) - idzie na wszystko, a wszystko idzie na nią
   if (card.rank === 'Q' || top.rank === 'Q') return true;
-  
-  // As (A) - idzie na wszystko (bo zmienia kolor)
   if (card.rank === 'A') return true;
   
-  // POPRAWKA: Jopek NIE idzie na wszystko. Musi pasować kolorem lub figurą, tak jak każda inna karta.
-  
-  // Standardowo: kolor lub figura
   if (card.suit === state.currentSuit) return true;
   if (card.rank === top.rank) return true;
   
   return false;
 }
 
-export function playCard(state: GameState, playerId: string, card: Card, chosenSuit?: Suit, requestedRank?: Rank): GameState {
+export function canPlayCards(state: GameState, cards: Card[]): boolean {
+  if (cards.length === 0) return false;
+  if (cards.length === 1) return canPlayCard(state, cards[0]);
+  if (cards.length === 2) return false; // Nie można zagrywać dwóch kart na raz
+
+  const rank = cards[0].rank;
+  if (!cards.every(c => c.rank === rank)) return false;
+
+  if (state.requestedRank) {
+    return rank === state.requestedRank;
+  }
+
+  if (!canPlayCard(state, cards[0])) return false;
+
+  return true;
+}
+
+export function playCards(state: GameState, playerId: string, cards: Card[], chosenSuit?: Suit, requestedRank?: Rank): GameState {
   if (state.winnerId) throw new Error('Gra już zakończona');
   const playerIndex = state.players.findIndex(p => p.id === playerId);
   if (playerIndex !== state.currentTurnIndex) throw new Error('Nie twoja kolej');
 
   const player = state.players[playerIndex];
-  const cardIndex = player.hand.findIndex(c => c.suit === card.suit && c.rank === card.rank);
   
-  if (cardIndex === -1) throw new Error('Nie masz tej karty');
-  if (!canPlayCard(state, card)) throw new Error('Nie możesz zagrać tej karty');
+  // Weryfikacja czy gracz ma te karty
+  const handCopy = [...player.hand];
+  for (const card of cards) {
+    const idx = handCopy.findIndex(c => c.suit === card.suit && c.rank === card.rank);
+    if (idx === -1) throw new Error('Nie masz tej karty');
+    handCopy.splice(idx, 1);
+  }
 
-  player.hand.splice(cardIndex, 1);
-  state.discardPile.push(card);
+  if (!canPlayCards(state, cards)) throw new Error('Nie możesz zagrać tych kart');
+
+  // Usuwanie z ręki
+  for (const card of cards) {
+    const idx = player.hand.findIndex(c => c.suit === card.suit && c.rank === card.rank);
+    player.hand.splice(idx, 1);
+  }
+
+  // Dodawanie na stos
+  state.discardPile.push(...cards);
   state.hasDrawnInTurn = false; 
   
   if (player.hand.length > 1) {
@@ -103,35 +124,42 @@ export function playCard(state: GameState, playerId: string, card: Card, chosenS
   let skipNext = false;
   let reverseTurn = false;
 
-  if (card.rank === 'A' && chosenSuit) {
+  const lastCard = cards[cards.length - 1];
+  if (lastCard.rank === 'A' && chosenSuit) {
     state.currentSuit = chosenSuit; 
   } else {
-    state.currentSuit = card.suit;
+    state.currentSuit = lastCard.suit;
   }
 
-  if (card.rank === 'Q') {
-    // Dama nic nie robi, po prostu leży
-  } else if (card.rank === 'J' && requestedRank) {
-    state.requestedRank = requestedRank; 
-  } else if (card.rank === '2') {
-    state.pendingDraw += 2;
-  } else if (card.rank === '3') {
-    state.pendingDraw += 3;
-  } else if (card.rank === 'K') {
-    if (card.suit === 'H') state.pendingDraw += 5;
-    if (card.suit === 'S') {
-      reverseTurn = true; 
-      state.pendingDraw += 5;
+  // Obsługa żądania Jopka
+  if (state.requestedRank) {
+    if (cards.length === 1 && cards[0].rank === 'J') {
+      if (!requestedRank || !['5','6','7','8','9','10'].includes(requestedRank)) throw new Error('Jopek może żądać tylko kart 5-10');
+      state.requestedRank = requestedRank;
+    } else if (cards.some(c => c.rank === state.requestedRank)) {
+      state.requestedRank = undefined; // Żądanie spełnione
     }
-    if (card.suit === 'C' || card.suit === 'D') {
-      state.pendingDraw = 0; 
-    }
-  } else if (card.rank === '4') {
-    skipNext = true; // CZWÓRKA POMIJA NASTĘPNEGO GRACZA
+  } else if (cards.length === 1 && cards[0].rank === 'J') {
+    if (!requestedRank || !['5','6','7','8','9','10'].includes(requestedRank)) throw new Error('Jopek może żądać tylko kart 5-10');
+    state.requestedRank = requestedRank;
   }
 
-  if (card.rank !== 'J' && state.requestedRank && card.rank === state.requestedRank) {
-    state.requestedRank = undefined; 
+  // Efekty kart
+  for (const card of cards) {
+    if (card.rank === '2') state.pendingDraw += 2;
+    else if (card.rank === '3') state.pendingDraw += 3;
+    else if (card.rank === 'K') {
+      if (card.suit === 'H') state.pendingDraw += 5;
+      if (card.suit === 'S') {
+        reverseTurn = true; 
+        state.pendingDraw += 5;
+      }
+      if (card.suit === 'C' || card.suit === 'D') {
+        state.pendingDraw = 0; 
+      }
+    } else if (card.rank === '4') {
+      skipNext = true;
+    }
   }
 
   state.lastPlayerIndex = state.currentTurnIndex;
@@ -152,6 +180,7 @@ export function playCard(state: GameState, playerId: string, card: Card, chosenS
   return state;
 }
 
+// Reszta funkcji (drawCard, passTurn, callMakao, catchMakao, reshuffle) pozostaje taka sama jak wcześniej.
 export function drawCard(state: GameState, playerId: string): GameState {
   if (state.winnerId) throw new Error('Gra już zakończona');
   const playerIndex = state.players.findIndex(p => p.id === playerId);
