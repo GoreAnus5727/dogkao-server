@@ -57,7 +57,12 @@ export function canPlayCard(state: GameState, card: Card): boolean {
   const top = state.discardPile[state.discardPile.length - 1];
   
   if (state.pendingDraw > 0) {
-    return card.rank === top.rank || card.rank === 'K';
+    const isAttackCard = ['2', '3', 'K'].includes(card.rank);
+    // NOWE: Można dołożyć tę samą figurę, Króla, albo kartę atakującą w tym samym kolorze (np. 3 na 2)
+    if (card.rank === top.rank) return true;
+    if (card.rank === 'K') return true; 
+    if (card.suit === top.suit && isAttackCard) return true;
+    return false;
   }
 
   if (state.requestedRank) {
@@ -76,14 +81,10 @@ export function canPlayCard(state: GameState, card: Card): boolean {
 export function canPlayCards(state: GameState, cards: Card[]): boolean {
   if (cards.length === 0) return false;
   if (cards.length === 1) return canPlayCard(state, cards[0]);
-  if (cards.length === 2) return false; // Nie można zagrywać dwóch kart na raz
-
+  
+  // Przy wielu kartach, wszystkie muszą być tej samej figury
   const rank = cards[0].rank;
   if (!cards.every(c => c.rank === rank)) return false;
-
-  if (state.requestedRank) {
-    return rank === state.requestedRank;
-  }
 
   if (!canPlayCard(state, cards[0])) return false;
 
@@ -97,7 +98,6 @@ export function playCards(state: GameState, playerId: string, cards: Card[], cho
 
   const player = state.players[playerIndex];
   
-  // POPRAWKA: Jeśli zagrywany jest Jopek z żądaniem, ignorujemy inne karty w paczce
   let cardsToPlay = [...cards];
   if (requestedRank) {
     const jacks = cardsToPlay.filter(c => c.rank === 'J');
@@ -106,7 +106,6 @@ export function playCards(state: GameState, playerId: string, cards: Card[], cho
     }
   }
 
-  // Weryfikacja czy gracz ma te karty
   const handCopy = [...player.hand];
   for (const card of cardsToPlay) {
     const idx = handCopy.findIndex(c => c.suit === card.suit && c.rank === card.rank);
@@ -116,13 +115,11 @@ export function playCards(state: GameState, playerId: string, cards: Card[], cho
 
   if (!canPlayCards(state, cardsToPlay)) throw new Error('Nie możesz zagrać tych kart');
 
-  // Usuwanie z ręki
   for (const card of cardsToPlay) {
     const idx = player.hand.findIndex(c => c.suit === card.suit && c.rank === card.rank);
     player.hand.splice(idx, 1);
   }
 
-  // Dodawanie na stos
   state.discardPile.push(...cardsToPlay);
   state.hasDrawnInTurn = false; 
   
@@ -140,19 +137,16 @@ export function playCards(state: GameState, playerId: string, cards: Card[], cho
     state.currentSuit = lastCard.suit;
   }
 
-  // POPRAWKA: Obsługa żądania Jopka (bez sprawdzania, czy gracz ma tę kartę w ręce)
   const playedJack = cardsToPlay.find(c => c.rank === 'J');
   if (playedJack && requestedRank) {
     if (!['5','6','7','8','9','10'].includes(requestedRank)) throw new Error('Jopek może żądać tylko kart 5-10');
     state.requestedRank = requestedRank;
   } else if (state.requestedRank) {
-    // Jeśli nie zagrano Jopka, sprawdzamy czy spełniono żądanie
     if (cardsToPlay.some(c => c.rank === state.requestedRank)) {
-      state.requestedRank = undefined; // Żądanie spełnione
+      state.requestedRank = undefined; 
     }
   }
 
-  // Efekty kart
   for (const card of cardsToPlay) {
     if (card.rank === '2') state.pendingDraw += 2;
     else if (card.rank === '3') state.pendingDraw += 3;
